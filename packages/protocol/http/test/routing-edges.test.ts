@@ -128,10 +128,20 @@ describe('HTTP routing - edges', () => {
     });
     const s = await makeServer([Ctrl], { allowedOrigins: '*' });
     try {
-      const res = await fetch(`${s.baseUrl}/anything`, { method: 'OPTIONS' });
+      const res = await fetch(`${s.baseUrl}/anything`, {
+        method: 'OPTIONS',
+        headers: {
+          Origin: 'https://example.com',
+          'Access-Control-Request-Headers': 'authorization,content-type',
+        },
+      });
       assert.strictEqual(res.status, 204);
       assert.strictEqual(res.headers.get('access-control-allow-origin'), '*');
       assert.ok(res.headers.get('access-control-allow-methods')?.includes('POST'));
+      assert.match(
+        res.headers.get('access-control-allow-headers') ?? '',
+        /authorization/i,
+      );
     } finally { await s.close(); }
   });
 

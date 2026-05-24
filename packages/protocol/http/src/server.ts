@@ -49,6 +49,8 @@ export function registerRequestHandler(handler: RequestHandler): void {
   requestHandlers.push(handler);
 }
 
+const DEFAULT_CORS_ALLOWED_HEADERS = 'Authorization, Content-Type';
+
 export interface JsonResponse<T = unknown> {
   json(data: T): void
   /** Send a UTF-8 HTML response with `text/html; charset=utf-8`. */
@@ -142,7 +144,7 @@ export function listen(app: App, port: number, options: ListenOptions = {}): Ser
         'Access-Control-Allow-Methods',
         'GET, POST, PUT, DELETE, PATCH, OPTIONS',
       );
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+      res.setHeader('Access-Control-Allow-Headers', DEFAULT_CORS_ALLOWED_HEADERS);
     } else if (Array.isArray(allowedOrigins)) {
       const origin = req.headers['origin'];
       if (origin && allowedOrigins.includes(origin)) {
@@ -152,7 +154,7 @@ export function listen(app: App, port: number, options: ListenOptions = {}): Ser
           'Access-Control-Allow-Methods',
           'GET, POST, PUT, DELETE, PATCH, OPTIONS',
         );
-        res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+        res.setHeader('Access-Control-Allow-Headers', DEFAULT_CORS_ALLOWED_HEADERS);
       }
     }
 

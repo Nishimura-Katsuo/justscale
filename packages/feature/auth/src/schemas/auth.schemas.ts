@@ -26,6 +26,7 @@ export const LoginBody = z.object({
 
 export const Login2FABody = z.object({
   code: z.string().length(6).regex(/^\d+$/),
+  challengeToken: z.string().optional(),
 });
 
 export const ChangePasswordBody = z.object({
@@ -68,6 +69,7 @@ export const ErrorResponse = z.object({
 export const Login2FARequiredResponse = z.object({
   requires2FA: z.literal(true),
   userId: z.string(),
+  challengeToken: z.string(),
 });
 
 export const TwoFactorSetupResponse = z.object({

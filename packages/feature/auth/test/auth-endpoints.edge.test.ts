@@ -21,6 +21,7 @@ import { AuthTestBundle } from '../src/testing.js';
 import { User } from '../src/models/user.js';
 import {
   SessionService,
+  TwoFactorService,
   UserService,
 } from '../src/services/index.js';
 import {
@@ -46,8 +47,9 @@ async function makeClient() {
   });
   const users = await app.container.resolve(UserService);
   const sessions = await app.container.resolve(SessionService);
+  const twofa = await app.container.resolve(TwoFactorService);
   const userRepo = await app.container.resolve(ModelRepository.of(User));
-  return { app, client, typed, users, sessions, userRepo };
+  return { app, client, typed, users, sessions, twofa, userRepo };
 }
 
 describe('AuthEndpoints edge cases', () => {
@@ -199,9 +201,14 @@ describe('AuthEndpoints edge cases', () => {
         password: 'pw12345678',
       });
       assert.strictEqual(res.status, 202);
-      const body = res.data as { requires2FA?: boolean; userId?: string };
+      const body = res.data as {
+        requires2FA?: boolean;
+        userId?: string;
+        challengeToken?: string;
+      };
       assert.strictEqual(body.requires2FA, true);
       assert.ok(body.userId, 'userId in 2FA gate response');
+      assert.ok(body.challengeToken, 'challengeToken in 2FA gate response');
       assert.ok(
         !('token' in (body as Record<string, unknown>)),
         'MUST NOT include token at 2FA gate — pre-2FA login is just a bypass signal otherwise',
@@ -263,11 +270,34 @@ describe('AuthEndpoints edge cases', () => {
     // a regression that collapsed any of them into a generic 500 would still
     // pass auth-controllers.e2e.test.ts.
 
+    it('valid TOTP without a password-issued challenge → 401 INVALID_REQUEST', async () => {
+      const { client, typed, users, twofa, userRepo } = await makeClient();
+      const u = await users.register('direct2fa@x.com', 'pw12345678', 'D');
+      const secret = 'JBSWY3DPEHPK3PXP';
+      {
+        using locked = await userRepo.lock(u);
+        await twofa.enable2FA(locked!, secret);
+      }
+
+      const res = await typed.api.auth.login2FA({
+        userId: User.ref(u).identifier,
+        code: twofa.generateCurrentCode(secret),
+      });
+
+      assert.strictEqual(res.status, 401);
+      assert.strictEqual(
+        (res.data as { code: string }).code,
+        'INVALID_REQUEST',
+      );
+      await client.close();
+    });
+
     it('unknown userId → 401 INVALID_REQUEST (no leak about user existence)', async () => {
       const { client, typed } = await makeClient();
       const res = await typed.api.auth.login2FA({
         userId: 'nobody-at-all',
         code: '000000',
+        challengeToken: 'not-a-real-challenge',
       });
       assert.strictEqual(res.status, 401);
       assert.strictEqual(
@@ -286,6 +316,7 @@ describe('AuthEndpoints edge cases', () => {
       const res = await typed.api.auth.login2FA({
         userId: User.ref(u).identifier,
         code: '000000',
+        challengeToken: 'not-a-real-challenge',
       });
       assert.strictEqual(res.status, 401);
       assert.strictEqual(
@@ -311,9 +342,15 @@ describe('AuthEndpoints edge cases', () => {
           twoFactorLockedUntil: new Date(Date.now() + 60_000),
         });
       }
+      const gate = await typed.api.auth.login({
+        email: 'locked@x.com',
+        password: 'pw12345678',
+      });
+      assert.strictEqual(gate.status, 202);
       const res = await typed.api.auth.login2FA({
         userId: User.ref(u).identifier,
         code: '000000',
+        challengeToken: gate.status === 202 ? gate.data.challengeToken : '',
       });
       assert.strictEqual(res.status, 429);
       assert.strictEqual((res.data as { code: string }).code, 'MFA_LOCKED');
@@ -330,9 +367,15 @@ describe('AuthEndpoints edge cases', () => {
           twoFactorSecret: 'JBSWY3DPEHPK3PXP',
         });
       }
+      const gate = await typed.api.auth.login({
+        email: 'wrong2fa@x.com',
+        password: 'pw12345678',
+      });
+      assert.strictEqual(gate.status, 202);
       const res = await typed.api.auth.login2FA({
         userId: User.ref(u).identifier,
         code: '000000', // statistically can't match a 30s TOTP window
+        challengeToken: gate.status === 202 ? gate.data.challengeToken : '',
       });
       assert.strictEqual(res.status, 401);
       assert.strictEqual(
@@ -356,9 +399,15 @@ describe('AuthEndpoints edge cases', () => {
           twoFactorSecret: 'JBSWY3DPEHPK3PXP',
         });
       }
+      const gate = await typed.api.auth.login({
+        email: 'byemail@x.com',
+        password: 'pw12345678',
+      });
+      assert.strictEqual(gate.status, 202);
       const res = await typed.api.auth.login2FA({
         userId: 'byemail@x.com',
         code: '000000',
+        challengeToken: gate.status === 202 ? gate.data.challengeToken : '',
       });
       // Reaches the verify path → 401 INVALID_2FA_CODE (not 401
       // INVALID_REQUEST, which would mean the lookup failed).

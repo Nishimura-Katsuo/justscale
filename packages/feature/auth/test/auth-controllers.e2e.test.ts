@@ -389,6 +389,7 @@ describe('Auth Controllers E2E', async () => {
         const login2faCode = services.twofa.generateCurrentCode(setupResult.data.secret);
         const login2faResult = await api.auth.login2FA({
           userId: loginResult.data.userId,
+          challengeToken: loginResult.data.challengeToken,
           code: login2faCode,
         });
         assert.strictEqual(login2faResult.status, 200);
@@ -515,6 +516,7 @@ describe('Auth Controllers E2E', async () => {
         const loginCode = services.twofa.generateCurrentCode(setupResult.data.secret);
         const login2faResult = await api.auth.login2FA({
           userId: loginResult.data.userId,
+          challengeToken: loginResult.data.challengeToken,
           code: loginCode,
         });
         assert.strictEqual(login2faResult.status, 200);

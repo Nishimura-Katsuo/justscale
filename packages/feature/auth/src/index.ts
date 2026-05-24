@@ -23,6 +23,10 @@ export {
   type CreateSessionOptions,
 } from './services/session.service.js';
 export {
+  TwoFactorChallengeService,
+  type TwoFactorChallengeServiceInstance,
+} from './services/twofa-challenge.service.js';
+export {
   TwoFactorService,
   type TwoFactorServiceInstance,
 } from './services/twofa.service.js';

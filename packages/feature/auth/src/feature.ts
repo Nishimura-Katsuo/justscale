@@ -15,6 +15,7 @@ import { NotificationService } from './services/notification.service.js';
 import { PasswordService } from './services/password.service.js';
 import { SessionService } from './services/session.service.js';
 import { AuthSignals } from './services/signals.service.js';
+import { TwoFactorChallengeService } from './services/twofa-challenge.service.js';
 import { TwoFactorService } from './services/twofa.service.js';
 import { UserService } from './services/user.service.js';
 
@@ -68,6 +69,7 @@ export const AuthFeature = createFeatureBuilder()
       .add(PasswordService)
       .add(UserService)
       .add(SessionService)
+      .add(TwoFactorChallengeService)
       .add(TwoFactorService)
       .add(NotificationService)
       .add(AuthSignals)
@@ -125,6 +127,7 @@ export const AuthEndpointsFeature = createFeatureBuilder()
   .requires(PasswordService)
   .requires(UserService)
   .requires(SessionService)
+  .requires(TwoFactorChallengeService)
   .requires(TwoFactorService)
   .requires(NotificationService)
   .requires(AuthSignals)

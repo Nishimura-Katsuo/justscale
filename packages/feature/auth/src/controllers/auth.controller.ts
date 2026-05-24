@@ -21,6 +21,7 @@ import {
 import { NotificationService } from '../services/notification.service.js';
 import { SessionService } from '../services/session.service.js';
 import { AuthSignals } from '../services/signals.service.js';
+import { TwoFactorChallengeService } from '../services/twofa-challenge.service.js';
 import { TwoFactorService } from '../services/twofa.service.js';
 import { UserExistsError, UserService } from '../services/user.service.js';
 
@@ -41,6 +42,7 @@ export const AuthController = createController('/auth', {
   inject: {
     users: UserService,
     sessions: SessionService,
+    twofaChallenges: TwoFactorChallengeService,
     twofa: TwoFactorService,
     notifications: NotificationService,
     signals: AuthSignals,
@@ -52,6 +54,7 @@ export const AuthController = createController('/auth', {
   routes: ({
     users,
     sessions,
+    twofaChallenges,
     twofa,
     notifications,
     signals,
@@ -131,11 +134,14 @@ export const AuthController = createController('/auth', {
 
         // Check if 2FA is required
         if (user.twoFactorEnabled) {
+          const userId = User.ref(user).identifier;
+          const challengeToken = twofaChallenges.issue(userId);
           // Return indicator that 2FA is required
           // Client should call /auth/login/2fa with the code
           res.status(202).json({
             requires2FA: true as const,
-            userId: User.ref(user).identifier,
+            userId,
+            challengeToken,
           });
           return;
         }
@@ -178,6 +184,13 @@ export const AuthController = createController('/auth', {
             .json({ error: 'Invalid request', code: 'INVALID_REQUEST' });
           return;
         }
+        const userId = User.ref(user).identifier;
+        if (!twofaChallenges.verify(userId, body.challengeToken)) {
+          res
+            .status(401)
+            .json({ error: 'Invalid request', code: 'INVALID_REQUEST' });
+          return;
+        }
 
         await using lockedForVerify = await userRepo.lock(user);
         if (!lockedForVerify) {
@@ -202,6 +215,7 @@ export const AuthController = createController('/auth', {
             .json({ error: 'Invalid 2FA code', code: 'INVALID_2FA_CODE' });
           return;
         }
+        twofaChallenges.consume(userId, body.challengeToken);
 
         const session = await sessions.create(user, {
           ipAddress: getClientIp(req, http.trustedProxies),

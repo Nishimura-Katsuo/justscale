@@ -12,6 +12,7 @@ import { AbstractContainer } from '../core/container-reflection.js';
 import type { RepositoryBinding, ServiceBinding, InstanceBinding, FeatureToken, AnyToken } from './types.js';
 import { isServiceDef, isRepositoryBinding, isFeatureToken } from './types.js';
 import { getFeatureMetadata } from './feature-builder.js';
+import { CycleError } from './cycle-error.js';
 
 // ============================================================================
 // Plugin Provides Registry
@@ -175,6 +176,10 @@ function formatDependencyError(missing: MissingDependency[]): string {
  * Get a human-readable name for a token.
  */
 export function getTokenDescription(token: AnyToken): string {
+  return describeToken(token, new Set<unknown>());
+}
+
+function describeToken(token: AnyToken, seen: Set<unknown>): string {
   // Token could be a symbol, function, or object with toString
   const t = token as unknown;
   if (typeof t === 'symbol') {
@@ -186,10 +191,15 @@ export function getTokenDescription(token: AnyToken): string {
   if (typeof t === 'object' && t !== null) {
     // Check if it's a ServiceDef (has deps and factory)
     if (isServiceDef(t)) {
+      if (seen.has(t)) {
+        return '[Circular Service]';
+      }
+      seen.add(t);
       // Try to get a name from the deps - e.g. "Service { client: AbstractPostgresClient }"
       const depNames = Object.entries(t.deps ?? {})
-        .map(([key, dep]) => `${key}: ${getTokenDescription(dep as AnyToken)}`)
+        .map(([key, dep]) => `${key}: ${describeToken(dep as AnyToken, seen)}`)
         .join(', ');
+      seen.delete(t);
       return depNames ? `Service { ${depNames} }` : 'Anonymous Service';
     }
     // Resolvable tokens (Config.of / Secret.of / FeatureFlag.of) carry a description field
@@ -212,6 +222,41 @@ export function getTokenDescription(token: AnyToken): string {
  */
 export function extractServiceDeps(service: ServiceDef<any, any>): AnyToken[] {
   return Object.values(service.deps ?? {}) as AnyToken[];
+}
+
+function validateServiceCycles(services: ServiceDef<any, any>[]): void {
+  const serviceSet = new Set<unknown>(services);
+  const visited = new Set<unknown>();
+  const active = new Set<unknown>();
+  const path: ServiceDef<any, any>[] = [];
+
+  function dfs(service: ServiceDef<any, any>): void {
+    if (active.has(service)) {
+      const start = path.indexOf(service);
+      const cycle = (start >= 0 ? path.slice(start) : [service])
+        .concat(service)
+        .map((entry) => getTokenDescription(entry as AnyToken));
+      throw new CycleError(cycle);
+    }
+    if (visited.has(service)) return;
+
+    active.add(service);
+    path.push(service);
+
+    for (const dep of extractServiceDeps(service)) {
+      if (serviceSet.has(dep)) {
+        dfs(dep as unknown as ServiceDef<any, any>);
+      }
+    }
+
+    path.pop();
+    active.delete(service);
+    visited.add(service);
+  }
+
+  for (const service of services) {
+    dfs(service);
+  }
 }
 
 /**
@@ -406,6 +451,8 @@ export function validateDependencies(
   features: FeatureToken<any, any>[],
   options?: ValidationOptions
 ): void {
+  validateServiceCycles(services);
+
   const graph = buildDependencyGraph(services, repoBindings, serviceBindings, instanceBindings, features);
 
   // Add additional provided tokens

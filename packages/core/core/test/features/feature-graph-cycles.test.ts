@@ -8,17 +8,14 @@
  * is no correct construction order).
  *
  * Scope: the framework ships `topologicalSort()` in `builder/sort.ts`
- * which detects cycles and throws `CycleError`. But `topologicalSort()`
- * is NOT invoked by the main `.build()` path (which does a flat
- * dependency check via `validateDependencies()`). So a cycle today
- * manifests at the runtime `container.resolve()` step, not at build.
+ * which detects feature/component cycles and throws `CycleError`.
+ * The main `.build()` path also validates service dependency cycles
+ * before the app is compiled.
  *
  * This file pins BOTH behaviors:
  *   - `topologicalSort()` correctly finds cycles when called directly
  *     (the primitive works).
- *   - `.build()` does NOT currently reject cycles (they surface later
- *     at resolve time). This is a gap; todo: `.build()` should run
- *     the sort and fail early with a clear error.
+ *   - `.build()` rejects service cycles early with a clear `CycleError`.
  */
 
 import { describe, it } from 'node:test';
@@ -109,31 +106,25 @@ describe('feature graph: cycle detection', () => {
   });
 
   describe('service cycles at build time', () => {
-    it('service A depends on service B, and B depends on A: builder BLOWS THE STACK in getTokenDescription', () => {
-      // INVARIANT (BUG): `validateDependencies` currently calls
-      // `getTokenDescription` on a ServiceDef, which recursively
-      // describes each dep by name. On a cyclic service graph, this
-      // recurses forever and throws `RangeError: Maximum call stack
-      // size exceeded` — not `CycleError` or `DependencyError`.
-      //
-      // todo: `getTokenDescription` needs a seen-set to break the
-      //   recursion, AND `.build()` should run `topologicalSort` up
-      //   front to produce a proper `CycleError` before we ever try
-      //   to format a message.
+    it('service A depends on service B, and B depends on A: builder throws CycleError', () => {
       const ServiceA = { deps: { b: null as any }, factory: () => ({ x: 1 }) };
       const ServiceB = { deps: { a: ServiceA as any }, factory: () => ({ y: 2 }) };
       ServiceA.deps.b = ServiceB as any;
 
       assert.throws(
         () => JustScale().add(ServiceA as any).add(ServiceB as any).build(),
-        (err: unknown) => err instanceof RangeError && /call stack/.test((err as Error).message),
-        'today: stack overflow in getTokenDescription — should be CycleError',
+        (err: unknown) => {
+          assert.ok(err instanceof CycleError, 'must be CycleError');
+          const joined = err.cycle.join(' ');
+          assert.match(joined, /Service/);
+          assert.match((err as Error).message, /Dependency cycle detected/);
+          assert.match((err as Error).message, /→/);
+          return true;
+        },
       );
     });
 
-    it('feature with self-referential service: same stack-overflow bug', async () => {
-      // INVARIANT (BUG): same cause as above — a ServiceDef whose deps
-      // includes itself makes `getTokenDescription` infinitely recurse.
+    it('feature with self-referential service: builder throws CycleError', async () => {
       const SelfDep: any = {
         deps: {},
         factory: () => ({ v: 1 }),
@@ -146,8 +137,12 @@ describe('feature graph: cycle detection', () => {
 
       assert.throws(
         () => JustScale().add(Feat).build(),
-        (err: unknown) => err instanceof RangeError,
-        'today: stack overflow — should be CycleError',
+        (err: unknown) => {
+          assert.ok(err instanceof CycleError, 'must be CycleError');
+          assert.match(err.cycle.join(' '), /Service/);
+          assert.match((err as Error).message, /Dependency cycle detected/);
+          return true;
+        },
       );
     });
   });
